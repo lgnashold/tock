@@ -207,14 +207,7 @@ pub unsafe fn reset_handler() {
     )
     .finalize(());
 
-    use kernel::hil::gpio::Configure;
-    use kernel::hil::gpio::Output;
-    &nrf52840::gpio::PORT[LED_RED_PIN].make_output();
-    &nrf52840::gpio::PORT[LED_RED_PIN].clear();
-    &nrf52840::gpio::PORT[LED_GREEN_PIN].make_output();
-    &nrf52840::gpio::PORT[LED_GREEN_PIN].set();
-    &nrf52840::gpio::PORT[LED_BLUE_PIN].make_output();
-    &nrf52840::gpio::PORT[LED_BLUE_PIN].clear();
+
 
     //--------------------------------------------------------------------------
     // ALARM & TIMER
