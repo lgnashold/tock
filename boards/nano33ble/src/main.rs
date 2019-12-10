@@ -20,6 +20,8 @@ const LED_RED_PIN: Pin = Pin::P0_24;
 const LED_GREEN_PIN: Pin = Pin::P0_16;
 const LED_BLUE_PIN: Pin = Pin::P0_06;
 
+const LED_KERNEL_PIN: Pin = Pin::P0_13;
+
 const BUTTON_RST_PIN: Pin = Pin::P0_18;
 
 const GPIO_D2: Pin = Pin::P1_11;
@@ -67,7 +69,7 @@ pub struct Platform {
     console: &'static capsules::console::Console<'static>,
     gpio: &'static capsules::gpio::GPIO<'static>,
     led: &'static capsules::led::LED<'static>,
-    // rng: &'static capsules::rng::RngDriver<'static>,
+    rng: &'static capsules::rng::RngDriver<'static>,
     ipc: kernel::ipc::IPC,
     alarm: &'static capsules::alarm::AlarmDriver<
         'static,
@@ -85,7 +87,7 @@ impl kernel::Platform for Platform {
             capsules::gpio::DRIVER_NUM => f(Some(self.gpio)),
             capsules::alarm::DRIVER_NUM => f(Some(self.alarm)),
             capsules::led::DRIVER_NUM => f(Some(self.led)),
-            // capsules::rng::DRIVER_NUM => f(Some(self.rng)),
+            capsules::rng::DRIVER_NUM => f(Some(self.rng)),
             // capsules::ble_advertising_driver::DRIVER_NUM => f(Some(self.ble_radio)),
             // capsules::ieee802154::DRIVER_NUM => match self.ieee802154_radio {
             //     Some(radio) => f(Some(radio)),
@@ -156,6 +158,10 @@ pub unsafe fn reset_handler() {
     //     cortexm4::scb::reset();
     // }
 
+    //--------------------------------------------------------------------------
+    // CAPABILITIES
+    //--------------------------------------------------------------------------
+
     // Create capabilities that the board needs to call certain protected kernel
     // functions.
     let process_management_capability =
@@ -163,12 +169,14 @@ pub unsafe fn reset_handler() {
     let main_loop_capability = create_capability!(capabilities::MainLoopCapability);
     let memory_allocation_capability = create_capability!(capabilities::MemoryAllocationCapability);
 
-    // Configure kernel debug gpios as early as possible
-    kernel::debug::assign_gpios(
-        Some(&nrf52840::gpio::PORT[LED_RED_PIN]),
-        Some(&nrf52840::gpio::PORT[LED_GREEN_PIN]),
-        Some(&nrf52840::gpio::PORT[LED_BLUE_PIN]),
-    );
+    //--------------------------------------------------------------------------
+    // DEBUG GPIO
+    //--------------------------------------------------------------------------
+
+    // Configure kernel debug GPIOs as early as possible. These are used by the
+    // `debug_gpio!(0, toggle)` macro. We configure these early so that the
+    // macro is available during most of the setup code and kernel execution.
+    kernel::debug::assign_gpios(Some(&nrf52840::gpio::PORT[LED_KERNEL_PIN]), None, None);
 
     //--------------------------------------------------------------------------
     // GPIO
@@ -225,7 +233,8 @@ pub unsafe fn reset_handler() {
     //--------------------------------------------------------------------------
 
     // Create a shared UART channel for the console and for kernel debug.
-    let uart_mux = components::console::UartMuxComponent::new(&nrf52::uart::UARTE0, 115200).finalize(());
+    let uart_mux =
+        components::console::UartMuxComponent::new(&nrf52::uart::UARTE0, 115200).finalize(());
 
     // Configure the UART pins on this specific board.
     nrf52::uart::UARTE0.initialize(
@@ -240,118 +249,22 @@ pub unsafe fn reset_handler() {
     // Create the debugger object that handles calls to `debug!()`.
     components::debug_writer::DebugWriterComponent::new(uart_mux).finalize(());
 
+    //--------------------------------------------------------------------------
+    // RANDOM NUMBERS
+    //--------------------------------------------------------------------------
+
+    let rng = components::rng::RngComponent::new(board_kernel, &nrf52::trng::TRNG).finalize(());
+
     // let ble_radio =
     //     BLEComponent::new(board_kernel, &nrf52::ble_radio::RADIO, mux_alarm).finalize(());
 
-    // let ieee802154_radio = if ieee802154 {
-    //     let (radio, _) = Ieee802154Component::new(
+    //     let (ieee802154_radio, _) = Ieee802154Component::new(
     //         board_kernel,
     //         &nrf52::ieee802154_radio::RADIO,
     //         PAN_ID,
     //         SRC_MAC,
     //     )
     //     .finalize(());
-    //     Some(radio)
-    // } else {
-    //     None
-    // };
-
-    // let temp = static_init!(
-    //     capsules::temperature::TemperatureSensor<'static>,
-    //     capsules::temperature::TemperatureSensor::new(
-    //         &nrf52::temperature::TEMP,
-    //         board_kernel.create_grant(&memory_allocation_capability)
-    //     )
-    // );
-    // kernel::hil::sensors::TemperatureDriver::set_client(&nrf52::temperature::TEMP, temp);
-
-    // let rng = components::rng::RngComponent::new(board_kernel, &nrf52::trng::TRNG).finalize(());
-
-    // // SPI
-    // let mux_spi = static_init!(
-    //     MuxSpiMaster<'static, nrf52::spi::SPIM>,
-    //     MuxSpiMaster::new(&nrf52::spi::SPIM0)
-    // );
-    // hil::spi::SpiMaster::set_client(&nrf52::spi::SPIM0, mux_spi);
-    // hil::spi::SpiMaster::init(&nrf52::spi::SPIM0);
-    // nrf52::spi::SPIM0.configure(
-    //     nrf52::pinmux::Pinmux::new(spi_pins.mosi as u32),
-    //     nrf52::pinmux::Pinmux::new(spi_pins.miso as u32),
-    //     nrf52::pinmux::Pinmux::new(spi_pins.clk as u32),
-    // );
-
-    // let nonvolatile_storage: Option<
-    //     &'static capsules::nonvolatile_storage_driver::NonvolatileStorage<'static>,
-    // > = if let Some(driver) = mx25r6435f {
-    //     // Create a SPI device for the mx25r6435f flash chip.
-    //     let mx25r6435f_spi = static_init!(
-    //         capsules::virtual_spi::VirtualSpiMasterDevice<'static, nrf52::spi::SPIM>,
-    //         capsules::virtual_spi::VirtualSpiMasterDevice::new(
-    //             mux_spi,
-    //             &gpio_port[driver.chip_select]
-    //         )
-    //     );
-    //     // Create an alarm for this chip.
-    //     let mx25r6435f_virtual_alarm = static_init!(
-    //         VirtualMuxAlarm<'static, nrf52::rtc::Rtc>,
-    //         VirtualMuxAlarm::new(mux_alarm)
-    //     );
-    //     // Setup the actual MX25R6435F driver.
-    //     let mx25r6435f = static_init!(
-    //         capsules::mx25r6435f::MX25R6435F<
-    //             'static,
-    //             capsules::virtual_spi::VirtualSpiMasterDevice<'static, nrf52::spi::SPIM>,
-    //             nrf52::gpio::GPIOPin,
-    //             VirtualMuxAlarm<'static, nrf52::rtc::Rtc>,
-    //         >,
-    //         capsules::mx25r6435f::MX25R6435F::new(
-    //             mx25r6435f_spi,
-    //             mx25r6435f_virtual_alarm,
-    //             &mut capsules::mx25r6435f::TXBUFFER,
-    //             &mut capsules::mx25r6435f::RXBUFFER,
-    //             Some(&gpio_port[driver.write_protect_pin]),
-    //             Some(&gpio_port[driver.hold_pin])
-    //         )
-    //     );
-    //     mx25r6435f_spi.set_client(mx25r6435f);
-    //     hil::time::Alarm::set_client(mx25r6435f_virtual_alarm, mx25r6435f);
-
-    //     pub static mut FLASH_PAGEBUFFER: capsules::mx25r6435f::Mx25r6435fSector =
-    //         capsules::mx25r6435f::Mx25r6435fSector::new();
-    //     let nv_to_page = static_init!(
-    //         capsules::nonvolatile_to_pages::NonvolatileToPages<
-    //             'static,
-    //             capsules::mx25r6435f::MX25R6435F<
-    //                 'static,
-    //                 capsules::virtual_spi::VirtualSpiMasterDevice<'static, nrf52::spi::SPIM>,
-    //                 nrf52::gpio::GPIOPin,
-    //                 VirtualMuxAlarm<'static, nrf52::rtc::Rtc>,
-    //             >,
-    //         >,
-    //         capsules::nonvolatile_to_pages::NonvolatileToPages::new(
-    //             mx25r6435f,
-    //             &mut FLASH_PAGEBUFFER
-    //         )
-    //     );
-    //     hil::flash::HasClient::set_client(mx25r6435f, nv_to_page);
-
-    //     let nonvolatile_storage = static_init!(
-    //         capsules::nonvolatile_storage_driver::NonvolatileStorage<'static>,
-    //         capsules::nonvolatile_storage_driver::NonvolatileStorage::new(
-    //             nv_to_page,
-    //             board_kernel.create_grant(&memory_allocation_capability),
-    //             0x60000, // Start address for userspace accessible region
-    //             0x20000, // Length of userspace accessible region
-    //             0,       // Start address of kernel accessible region
-    //             0x60000, // Length of kernel accessible region
-    //             &mut capsules::nonvolatile_storage_driver::BUFFER
-    //         )
-    //     );
-    //     hil::nonvolatile_storage::NonvolatileStorage::set_client(nv_to_page, nonvolatile_storage);
-    //     Some(nonvolatile_storage)
-    // } else {
-    //     None
-    // };
 
     // Start all of the clocks. Low power operation will require a better
     // approach than this.
@@ -379,7 +292,7 @@ pub unsafe fn reset_handler() {
         console: console,
         led: led,
         gpio: gpio,
-        // rng: rng,
+        rng: rng,
         alarm: alarm,
         ipc: kernel::ipc::IPC::new(board_kernel, &memory_allocation_capability),
     };
@@ -389,8 +302,12 @@ pub unsafe fn reset_handler() {
         nrf52::chip::NRF52::new(&nrf52840::gpio::PORT)
     );
 
-    // debug!("Initialization complete. Entering main loop\r");
+    debug!("Initialization complete. Entering main loop\r");
     // debug!("{}", &nrf52::ficr::FICR_INSTANCE);
+
+    //--------------------------------------------------------------------------
+    // PROCESSES AND MAIN LOOP
+    //--------------------------------------------------------------------------
 
     extern "C" {
         /// Beginning of the ROM region containing app images.
@@ -407,29 +324,4 @@ pub unsafe fn reset_handler() {
     );
 
     board_kernel.kernel_loop(&platform, chip, Some(&platform.ipc), &main_loop_capability);
-
-    // nrf52dk_base::setup_board(
-    //     board_kernel,
-    //     BUTTON_RST_PIN,
-    //     &nrf52840::gpio::PORT,
-    //     gpio_pins,
-    //     LED1_PIN,
-    //     LED2_PIN,
-    //     LED3_PIN,
-    //     led_pins,
-    //     &UartPins::new(UART_RTS, UART_TXD, UART_CTS, UART_RXD),
-    //     &SpiPins::new(SPI_MOSI, SPI_MISO, SPI_CLK),
-    //     &Some(SpiMX25R6435FPins::new(
-    //         SPI_MX25R6435F_CHIP_SELECT,
-    //         SPI_MX25R6435F_WRITE_PROTECT_PIN,
-    //         SPI_MX25R6435F_HOLD_PIN,
-    //     )),
-    //     button_pins,
-    //     true,
-    //     &mut APP_MEMORY,
-    //     &mut PROCESSES,
-    //     FAULT_RESPONSE,
-    //     nrf52840::uicr::Regulator0Output::DEFAULT,
-    //     false,
-    // );
 }
