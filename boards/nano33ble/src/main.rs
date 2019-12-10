@@ -6,7 +6,7 @@
 #![no_main]
 #![deny(missing_docs)]
 
-use capsules::ActivationMode::ActiveLow;
+use capsules::led::ActivationMode::ActiveLow;
 use kernel::capabilities;
 use kernel::common::dynamic_deferred_call::{DynamicDeferredCall, DynamicDeferredCallClientState};
 use kernel::component::Component;
@@ -31,6 +31,9 @@ const GPIO_D7: Pin = Pin::P0_23;
 const GPIO_D8: Pin = Pin::P0_21;
 const GPIO_D9: Pin = Pin::P0_27;
 const GPIO_D10: Pin = Pin::P1_02;
+
+const UART_TX_PIN: Pin = Pin::P1_03;
+const UART_RX_PIN: Pin = Pin::P1_10;
 
 /// UART Writer for panic!()s.
 pub mod io;
@@ -61,7 +64,7 @@ pub struct Platform {
     //     VirtualMuxAlarm<'static, Rtc<'static>>,
     // >,
     // ieee802154_radio: Option<&'static capsules::ieee802154::RadioDriver<'static>>,
-    // console: &'static capsules::console::Console<'static>,
+    console: &'static capsules::console::Console<'static>,
     gpio: &'static capsules::gpio::GPIO<'static>,
     led: &'static capsules::led::LED<'static>,
     // rng: &'static capsules::rng::RngDriver<'static>,
@@ -78,7 +81,7 @@ impl kernel::Platform for Platform {
         F: FnOnce(Option<&dyn kernel::Driver>) -> R,
     {
         match driver_num {
-            // capsules::console::DRIVER_NUM => f(Some(self.console)),
+            capsules::console::DRIVER_NUM => f(Some(self.console)),
             capsules::gpio::DRIVER_NUM => f(Some(self.gpio)),
             capsules::alarm::DRIVER_NUM => f(Some(self.alarm)),
             capsules::led::DRIVER_NUM => f(Some(self.led)),
@@ -167,7 +170,10 @@ pub unsafe fn reset_handler() {
         Some(&nrf52840::gpio::PORT[LED_BLUE_PIN]),
     );
 
-    // GPIOs
+    //--------------------------------------------------------------------------
+    // GPIO
+    //--------------------------------------------------------------------------
+
     let gpio = components::gpio::GpioPinsNine::new(
         &nrf52840::gpio::PORT[GPIO_D2],
         &nrf52840::gpio::PORT[GPIO_D3],
@@ -182,7 +188,10 @@ pub unsafe fn reset_handler() {
     )
     .finalize(());
 
+    //--------------------------------------------------------------------------
     // LEDs
+    //--------------------------------------------------------------------------
+
     let led = components::led::LedsThree::new(
         (&nrf52840::gpio::PORT[LED_RED_PIN], ActiveLow),
         (&nrf52840::gpio::PORT[LED_GREEN_PIN], ActiveLow),
@@ -199,43 +208,37 @@ pub unsafe fn reset_handler() {
     &nrf52840::gpio::PORT[LED_BLUE_PIN].make_output();
     &nrf52840::gpio::PORT[LED_BLUE_PIN].clear();
 
+    //--------------------------------------------------------------------------
+    // ALARM & TIMER
+    //--------------------------------------------------------------------------
+
     let rtc = &nrf52::rtc::RTC;
     rtc.start();
-    // let mux_alarm = static_init!(
-    //     capsules::virtual_alarm::MuxAlarm<'static, nrf52::rtc::Rtc>,
-    //     capsules::virtual_alarm::MuxAlarm::new(&nrf52::rtc::RTC)
-    // );
-    // hil::time::Alarm::set_client(rtc, mux_alarm);
 
     let mux_alarm = components::alarm::AlarmMuxComponent::new(rtc)
         .finalize(components::alarm_mux_component_helper!(nrf52::rtc::Rtc));
     let alarm = components::alarm::AlarmDriverComponent::new(board_kernel, mux_alarm)
         .finalize(components::alarm_component_helper!(nrf52::rtc::Rtc));
 
-    // // Create a shared UART channel for the console and for kernel debug.
-    // let uart_mux = static_init!(
-    //     MuxUart<'static>,
-    //     MuxUart::new(
-    //         &nrf52::uart::UARTE0,
-    //         &mut capsules::virtual_uart::RX_BUF,
-    //         115200
-    //     )
-    // );
-    // uart_mux.initialize();
-    // hil::uart::Transmit::set_transmit_client(&nrf52::uart::UARTE0, uart_mux);
-    // hil::uart::Receive::set_receive_client(&nrf52::uart::UARTE0, uart_mux);
+    //--------------------------------------------------------------------------
+    // UART & CONSOLE & DEBUG
+    //--------------------------------------------------------------------------
 
-    // nrf52::uart::UARTE0.initialize(
-    //     nrf52::pinmux::Pinmux::new(uart_pins.txd as u32),
-    //     nrf52::pinmux::Pinmux::new(uart_pins.rxd as u32),
-    //     nrf52::pinmux::Pinmux::new(uart_pins.cts as u32),
-    //     nrf52::pinmux::Pinmux::new(uart_pins.rts as u32),
-    // );
+    // Create a shared UART channel for the console and for kernel debug.
+    let uart_mux = components::console::UartMuxComponent::new(&nrf52::uart::UARTE0, 115200).finalize(());
 
-    // // Setup the console.
-    // let console = components::console::ConsoleComponent::new(board_kernel, uart_mux).finalize(());
-    // // Create the debugger object that handles calls to `debug!()`.
-    // components::debug_writer::DebugWriterComponent::new(uart_mux).finalize(());
+    // Configure the UART pins on this specific board.
+    nrf52::uart::UARTE0.initialize(
+        nrf52::pinmux::Pinmux::new(UART_TX_PIN as u32),
+        nrf52::pinmux::Pinmux::new(UART_RX_PIN as u32),
+        None,
+        None,
+    );
+
+    // Setup the console.
+    let console = components::console::ConsoleComponent::new(board_kernel, uart_mux).finalize(());
+    // Create the debugger object that handles calls to `debug!()`.
+    components::debug_writer::DebugWriterComponent::new(uart_mux).finalize(());
 
     // let ble_radio =
     //     BLEComponent::new(board_kernel, &nrf52::ble_radio::RADIO, mux_alarm).finalize(());
@@ -373,7 +376,7 @@ pub unsafe fn reset_handler() {
     let platform = Platform {
         // ble_radio: ble_radio,
         // ieee802154_radio: ieee802154_radio,
-        // console: console,
+        console: console,
         led: led,
         gpio: gpio,
         // rng: rng,
