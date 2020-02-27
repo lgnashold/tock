@@ -266,10 +266,15 @@ impl Kernel {
                 process.set_fault_state();
             }
             Some(ContextSwitchReason::SyscallFired { syscall }) => {
+                debug!("In Syscall");
                 process.debug_syscall_called();
-
                 // Handle each of the syscalls.
                 match syscall {
+                    Syscall::DEADLINE {time} => {
+                        debug!("HELLO");
+                        let res = ReturnCode::ENODEVICE;
+                        process.set_syscall_return_value(res.into());
+                    } 
                     Syscall::MEMOP { operand, arg0 } => {
                         let res = memop::memop(process, operand, arg0);
                         if config::CONFIG.trace_syscalls {

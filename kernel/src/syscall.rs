@@ -47,6 +47,10 @@ pub enum Syscall {
     ///
     /// SVC_NUM = 4
     MEMOP { operand: usize, arg0: usize },
+
+
+    /// SCV_NUM = 5
+    DEADLINE { time: usize},
 }
 
 /// Why the process stopped executing and execution returned to the kernel.
