@@ -209,6 +209,7 @@ pub fn arguments_to_syscall(
             operand: r0,
             arg0: r1,
         }),
+        5 => Some(Syscall::DEADLINE {time: r0}),
         _ => None,
     }
 }

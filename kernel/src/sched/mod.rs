@@ -6,6 +6,7 @@
 crate mod multilevel_feedback;
 crate mod priority;
 crate mod round_robin;
+crate mod realtime;
 
 use core::cell::Cell;
 use core::ptr::NonNull;
@@ -266,12 +267,11 @@ impl Kernel {
                 process.set_fault_state();
             }
             Some(ContextSwitchReason::SyscallFired { syscall }) => {
-                debug!("In Syscall");
                 process.debug_syscall_called();
                 // Handle each of the syscalls.
                 match syscall {
                     Syscall::DEADLINE {time} => {
-                        debug!("HELLO");
+                        //debug!("DEADLINE CALLED");
                         let res = ReturnCode::ENODEVICE;
                         process.set_syscall_return_value(res.into());
                     } 
